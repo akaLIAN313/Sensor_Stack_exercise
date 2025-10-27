@@ -35,14 +35,24 @@ def filter_data(data: pd.DataFrame,
         The filtered data.
     """
     filter_conditions = []
+    query_locals = {}
     for filter in filter_by:
         if filter.key not in data.columns:
             raise ValueError(f"Filter key {filter.key} not found in data")
         elif filter.compare_str is None:
             raise ValueError(f"Filter compare string is not set for {filter.key}")
         else:
+            # Handle different value types for proper query string formatting
+            if isinstance(filter.value, pd.Timestamp):
+                # For Timestamps, use @ to reference the value variable
+                value_str = f"@filter_{filter.key}"
+                query_locals[f"filter_{filter.key}"] = filter.value
+            else:
+                # Default to quoted string for other types
+                value_str = f"\"{filter.value}\""
+            
             filter_conditions.append(
-                f"{filter.key} {filter.compare_str} \"{filter.value}\"")
+                f"{filter.key} {filter.compare_str} {value_str}")
     filter_query = " & ".join(filter_conditions)
-    data = data.query(filter_query)
+    data = data.query(filter_query, local_dict=query_locals)
     return data
