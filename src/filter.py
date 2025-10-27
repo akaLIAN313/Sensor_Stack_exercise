@@ -34,6 +34,8 @@ def filter_data(data: pd.DataFrame,
     Returns:
         The filtered data.
     """
+    if len(filter_by) == 0:
+        return data
     filter_conditions = []
     query_locals = {}
     for filter in filter_by:

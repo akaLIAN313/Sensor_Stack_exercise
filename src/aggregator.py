@@ -2,6 +2,42 @@ import datetime
 import pandas as pd
 import numpy as np
 
+# Global metric name mapping for normalization
+METRIC_MAPPING = {
+    'temp': 'temperature',
+    'hum': 'humidity',
+    'press': 'pressure'
+}
+
+
+def normalize_metric_names(data: pd.DataFrame, metric_col: str = 'metric') -> pd.DataFrame:
+    """
+    Normalize metric names using a predefined mapping.
+    Maps abbreviated names to full names:
+        'temp' -> 'temperature'
+        'hum' -> 'humidity'
+        'press' -> 'pressure'
+    
+    Args:
+        data: The dataframe containing metric names
+        metric_col: Column name containing metrics
+    
+    Returns:
+        DataFrame with normalized metric names
+    """
+    if metric_col not in data.columns:
+        return data
+    
+    # Convert to string if categorical and apply mapping
+    data = data.copy()
+    if hasattr(data[metric_col].dtype, 'categories'):
+        data[metric_col] = data[metric_col].astype(str)
+    
+    # Apply mapping: if metric is in mapping, use mapped value; otherwise keep original
+    data[metric_col] = data[metric_col].map(lambda x: METRIC_MAPPING.get(x, x))
+    
+    return data
+
 
 def aggregate_data(data: pd.DataFrame,
     group_by: list[str]) -> pd.DataFrame:
@@ -39,15 +75,24 @@ def merge_aggregates(agg1: pd.DataFrame, agg2: pd.DataFrame, group_by: list[str]
     Returns:
         Merged aggregated dataframe with correct statistics
     """
+    # Convert categorical columns to string before merging to avoid issues
+    for col in group_by:
+        if col in agg1.columns and hasattr(agg1[col].dtype, 'categories'):
+            agg1[col] = agg1[col].astype(str)
+        if col in agg2.columns and hasattr(agg2[col].dtype, 'categories'):
+            agg2[col] = agg2[col].astype(str)
     # Outer merge to get all combinations
     merged = pd.merge(
-        agg1.fillna(0), 
-        agg2.fillna(0), 
+        agg1, 
+        agg2, 
         on=group_by, 
         how='outer', 
         suffixes=('_1', '_2')
     )
-    merged = merged.fillna(0)
+    # Fill numeric columns with 0, leave categorical/string columns alone
+    for col in merged.columns:
+        if merged[col].dtype in ['float64', 'int64', 'float32', 'int32']:
+            merged[col] = merged[col].fillna(0)
     # Combine counts
     merged['value_count'] = merged['value_count_1'] + merged['value_count_2']
     # Combine means using weighted average: (n1*mean1 + n2*mean2) / (n1+n2)
