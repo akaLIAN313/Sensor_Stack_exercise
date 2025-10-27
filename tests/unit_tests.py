@@ -19,7 +19,7 @@ class TestAggregator(unittest.TestCase):
         """
         Generate sensor data for testing.
         2*n devices in n sites, each have m data timed evenly from 
-        2025-01-01 00:00 +0000UTC to 2025-11-01 00:00 +0000UTC 
+        2025-01-01 00:00 +0000UTC to 2025-11-01 00:00 +0000UTC (left inclusive)
         metric values are generated with mean = device_id * metric_id
         expected valued are computed based on the generated values
         Args:
