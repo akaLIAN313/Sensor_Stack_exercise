@@ -8,7 +8,10 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from aggregator import aggregate_data
+from filter import FilterType, filter_data
 
+start_time = pd.Timestamp('2025-01-01 00:00:00', tz='UTC')
+end_time = start_time + pd.DateOffset(years=1)
 
 class TestAggregator(unittest.TestCase):
     
@@ -17,25 +20,22 @@ class TestAggregator(unittest.TestCase):
         Generate sensor data for testing.
         2*n devices in n sites, each have m data timed evenly from 
         2025-01-01 00:00 +0000UTC to 2025-11-01 00:00 +0000UTC 
-        with mean value same as the device id for for each metric:
-        (temp and humidity)
+        metric values are generated with mean = device_id * metric_id
+        expected valued are computed based on the generated values
         Args:
             n_sites: Number of sites (will create 2*n_sites devices)
             n_timestamps: Number of timestamps per device (evenly spaced)
         
         Returns:
-            DataFrame with columns: time, site, device, metric, unit, value
+            expected_values: Dictionary of expected values for each device and metric
+            df: DataFrame with columns: time, site, device, metric, unit, value
         """
         # Generate time range
-        start_time = pd.Timestamp('2025-01-01 00:00:00', tz='UTC')
-        end_time = pd.Timestamp('2025-11-01 00:00:00', tz='UTC')
-        timestamps = pd.date_range(start=start_time, end=end_time, periods=n_timestamps)
-        
-        # Set seed for reproducibility
-        np.random.seed(42)
-        
+        timestamps = pd.date_range(start=start_time, end=end_time, 
+            inclusive='left', periods=n_timestamps + 1)
         df = pd.DataFrame(columns=['time', 'site', 'device', 'metric', 'unit', 'value'])
         expected_values = {}
+        # for each site, create 2 devices and 2 metrics, each has n_timestamps value
         for site_num in range(n_sites):
             site_name = f"site_{site_num}"
             # Create 2 devices per site
@@ -45,7 +45,8 @@ class TestAggregator(unittest.TestCase):
                 for metric_id in range(2):
                     device_name = f"device_{device_id:03d}"
                     device_timestamps = timestamps.copy()
-                    device_times = [t.strftime('%Y-%m-%d %H:%M:%S +0000 UTC') for t in device_timestamps]
+                    device_times = [t.strftime('%Y-%m-%d %H:%M:%S +0000 UTC')
+                        for t in device_timestamps]
                     # Generate values with mean = device_id * metric_id
                     device_values = np.random.normal(
                         loc=device_id * metric_id,
@@ -57,7 +58,7 @@ class TestAggregator(unittest.TestCase):
                         'mean': device_values.mean(),
                         'min': device_values.min(),
                         'max': device_values.max(),
-                        'std': device_values.std()
+                        'std': device_values.std(ddof=1)  # Use ddof=1 to match pandas default
                     }
                     device_data = pd.DataFrame({
                         'time': device_times,
@@ -67,20 +68,21 @@ class TestAggregator(unittest.TestCase):
                         'unit': ['unit'] * n_timestamps,
                         'value': device_values
                     })
+                    device_data.loc[:, 'time'] = pd.to_datetime(device_data['time'], format='%Y-%m-%d %H:%M:%S %z UTC')
                     df = pd.concat([df, device_data], ignore_index=True)
-        # Sort by time, site, device, metric for cleaner output
         df = df.sort_values(['time', 'site', 'device', 'metric']).reset_index(drop=True)
         return expected_values, df
-
-    def test_basic_aggregation(self):
+    
+    def assert_generated_data(self, expected_values, agg_data, n_sites, n_timestamps):
         """
-        Test basic aggregation functionality with multiple groups and values.
+        Assert the generated data is corrected process with the expected values.
+        Note that the expeted values must be generated with the generate_sensor_data function.
+        Args:
+            expected_values: Dictionary of expected values for each device and metric
+            agg_data: DataFrame with aggregated data
+            n_sites: Number of sites
+            n_timestamps: Number of timestamps per device
         """
-        n_sites = 2
-        n_timestamps = 10
-        expected_values, data = self.generate_sensor_data(n_sites=n_sites, n_timestamps=n_timestamps)
-        grouped_data, agg_data = aggregate_data(data, ['site', 'device', 'metric'])
-        print(agg_data)
         for site in range(n_sites):
             site_name = f"site_{site}"
             for device_in_site in range(2):
@@ -119,8 +121,44 @@ class TestAggregator(unittest.TestCase):
                         expected_values[device_id][metric_id]['max'],
                         places=7
                     )
-    
+                    self.assertAlmostEqual(
+                        agg_data[
+                            (agg_data['site'] == site_name) 
+                            & (agg_data['device'] == device_name)
+                            & (agg_data['metric'] == metric)].iloc[0]['value_std'],
+                        expected_values[device_id][metric_id]['std'],
+                        places=7
+                    )
 
+    def test_basic_aggregation(self):
+        """
+        Test basic aggregation functionality with multiple groups and values.
+        """
+        n_sites = 10
+        n_timestamps = 10
+        expected_values, data = self.generate_sensor_data(n_sites=n_sites, n_timestamps=n_timestamps)
+        grouped_data, agg_data = aggregate_data(data, ['site', 'device', 'metric'])
+        self.assert_generated_data(expected_values, agg_data, n_sites, n_timestamps)
+    
+    def test_aggregation_with_time_range(self):
+        """
+        Test aggregation with different grouping scenarios:
+        Note that the expeted values must be generated with the generate_sensor_data function.
+        """
+        n_sites = 2
+        n_timestamps = 4
+        expected_values, data = self.generate_sensor_data(n_sites=n_sites, n_timestamps=n_timestamps)
+        data.loc[:, 'time'] = pd.to_datetime(data['time'], format='%Y-%m-%d %H:%M:%S %z UTC')
+        next_year_data = data.copy()
+        next_year_data['time'] = next_year_data['time'] + pd.DateOffset(years=1)
+        data = pd.concat([data, next_year_data], ignore_index=True)
+        
+        filtered_data = filter_data(data, 
+            [FilterType(
+                key="time", value=end_time,
+                value_type=pd.Timestamp, compare_str="<")])
+        grouped_data, agg_data = aggregate_data(filtered_data, ['site', 'device', 'metric'])
+        self.assert_generated_data(expected_values, agg_data, n_sites, n_timestamps)
 
 if __name__ == '__main__':
     unittest.main()
