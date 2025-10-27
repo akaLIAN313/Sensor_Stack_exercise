@@ -7,7 +7,7 @@ This project requires Python 3.10 or higher.
 
 ### Install from pyproject.toml
 
-Install the project and dependencies in editable mode:
+Auto read dependency with pip (uv is personally recommended!)
 ```bash
 pip install -e .
 ```
